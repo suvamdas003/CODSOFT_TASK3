@@ -1,0 +1,160 @@
+# CareerHub production-style stack.
+#
+#   cp .env.example .env        # then set POSTGRES_PASSWORD (URL-safe, e.g. `openssl rand -hex 24`)
+#   docker compose up --build -d
+#   open http://localhost:${APP_PORT:-8088}
+#
+# Services: db (PostgreSQL, private network only) → migrate (one-shot
+# `prisma migrate deploy`) → app (Next.js). Optional profiles:
+#   docker compose --profile demo run --rm seed     # synthetic demo data (never in production)
+#   docker compose --profile proxy up -d            # Nginx reverse proxy on ${PROXY_PORT:-8089}
+#
+# Only whitelisted variables are passed to containers; secrets never enter images.
+name: careerhub
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-database-url: &database-url "postgresql://${POSTGRES_USER:-careerhub}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-careerhub}?schema=public"
+
+x-storage-env: &storage-env
+  STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+  UPLOAD_DIR: /app/storage/uploads
+  S3_BUCKET: ${S3_BUCKET:-}
+  S3_REGION: ${S3_REGION:-}
+  S3_ENDPOINT: ${S3_ENDPOINT:-}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+  S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-false}
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-careerhub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-careerhub}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [backend]
+    # Not published to the host. Use `docker compose exec db psql ...` for access.
+    healthcheck:
+      test: ["CMD-SHELL", 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    stop_grace_period: 30s
+    logging: *logging
+
+  migrate:
+    build:
+      context: .
+      target: tools
+    image: careerhub-tools:latest
+    environment:
+      DATABASE_URL: *database-url
+    command: ["npx", "prisma", "migrate", "deploy"]
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [backend]
+    restart: "no"
+    logging: *logging
+
+  app:
+    build:
+      context: .
+      target: runner
+    image: careerhub-app:latest
+    restart: unless-stopped
+    init: true
+    environment:
+      <<: *storage-env
+      DATABASE_URL: *database-url
+      APP_URL: ${PUBLIC_URL:-http://localhost:8088}
+      # Secure cookies by default; browsers accept them on http://localhost.
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-7}
+      RESUME_MAX_BYTES: ${RESUME_MAX_BYTES:-5242880}
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8088}:3000"
+    volumes:
+      - uploads:/app/storage/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks: [backend, frontend]
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache:uid=1000,gid=1000
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    stop_grace_period: 30s
+    logging: *logging
+
+  # Synthetic demo data for evaluation only (explicit ALLOW_DEMO_SEED opt-in).
+  seed:
+    profiles: [demo]
+    image: careerhub-tools:latest
+    environment:
+      <<: *storage-env
+      DATABASE_URL: *database-url
+      ALLOW_DEMO_SEED: "true"
+      SEED_RESET: ${SEED_RESET:-false}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      SEED_RECRUITER_PASSWORD: ${SEED_RECRUITER_PASSWORD:-}
+      SEED_CANDIDATE_PASSWORD: ${SEED_CANDIDATE_PASSWORD:-}
+    command: ["npx", "tsx", "prisma/seed.ts"]
+    volumes:
+      - uploads:/app/storage/uploads
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks: [backend]
+    restart: "no"
+    logging: *logging
+
+  # Optional lightweight reverse proxy (TLS termination belongs in front of it
+  # or in a managed load balancer). Set TRUST_PROXY=true when using it.
+  proxy:
+    profiles: [proxy]
+    image: nginxinc/nginx-unprivileged:1.29-alpine
+    restart: unless-stopped
+    ports:
+      - "${PROXY_BIND:-127.0.0.1}:${PROXY_PORT:-8089}:8080"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      app:
+        condition: service_healthy
+    networks: [frontend]
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    logging: *logging
+
+networks:
+  # The database network has no route to the outside world.
+  backend:
+    internal: true
+  frontend: {}
+
+volumes:
+  pgdata:
+  uploads:

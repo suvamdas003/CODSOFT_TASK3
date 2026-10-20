@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --color-brand-50: #eef4ff;
+  --color-brand-100: #dbe6fe;
+  --color-brand-200: #bfd3fe;
+  --color-brand-500: #3b6ef5;
+  --color-brand-600: #2554e8;
+  --color-brand-700: #1d42c9;
+  --color-brand-800: #1e3a9f;
+  --color-brand-900: #1e3580;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-brand-600;
+  }
+  a {
+    @apply text-brand-700;
+  }
+  h1, h2, h3 {
+    @apply text-slate-900;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-slate-200 bg-white shadow-sm;
+  }
+  .table-base {
+    @apply w-full border-collapse text-left text-sm;
+  }
+  .table-base th {
+    @apply border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-semibold tracking-wide text-slate-600 uppercase;
+  }
+  .table-base td {
+    @apply border-b border-slate-100 px-4 py-3 align-top;
+  }
+  .table-base tr:last-child td {
+    @apply border-b-0;
+  }
+  .prose-text {
+    @apply text-sm leading-6 whitespace-pre-line text-slate-700;
+  }
+}

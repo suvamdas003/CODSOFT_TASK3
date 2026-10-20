@@ -1,0 +1,458 @@
+// CareerHub database schema (PostgreSQL).
+//
+// Table and column names are snake_case in the database; Prisma models use
+// camelCase. Constraints Prisma cannot express (CHECK constraints) live in
+// prisma/migrations/*/migration.sql.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ──────────────────────────────────────────────────────────────────
+
+enum Role {
+  CANDIDATE
+  RECRUITER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  INTERNSHIP
+  TEMPORARY
+}
+
+enum WorkplaceType {
+  ONSITE
+  HYBRID
+  REMOTE
+}
+
+enum ExperienceLevel {
+  ENTRY
+  MID
+  SENIOR
+  LEAD
+  EXECUTIVE
+}
+
+enum JobStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+}
+
+enum ModerationStatus {
+  ACTIVE
+  REMOVED
+}
+
+enum ApplicationStatus {
+  APPLIED
+  SHORTLISTED
+  INTERVIEW
+  OFFERED
+  REJECTED
+  HIRED
+  WITHDRAWN
+}
+
+enum InterviewMode {
+  VIDEO
+  PHONE
+  ONSITE
+}
+
+enum InterviewStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+enum ReportReason {
+  SPAM
+  FRAUD
+  MISLEADING
+  DISCRIMINATORY
+  OFFENSIVE
+  OTHER
+}
+
+enum ReportStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+enum NotificationType {
+  APPLICATION_RECEIVED
+  APPLICATION_STATUS
+  INTERVIEW_SCHEDULED
+  INTERVIEW_UPDATED
+  JOB_MODERATED
+  ACCOUNT
+}
+
+// ─── Identity ───────────────────────────────────────────────────────────────
+
+model User {
+  id           String     @id @default(cuid())
+  /// Always stored lower-cased and trimmed.
+  email        String     @unique
+  name         String     @db.VarChar(120)
+  passwordHash String     @map("password_hash")
+  role         Role
+  status       UserStatus @default(ACTIVE)
+  lastLoginAt  DateTime?  @map("last_login_at")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  sessions            Session[]
+  candidateProfile    CandidateProfile?
+  recruiterProfile    RecruiterProfile?
+  resumes             Resume[]
+  applications        Application[]
+  savedJobs           SavedJob[]
+  postedJobs          Job[]
+  notes               ApplicationNote[]
+  statusChanges       ApplicationStatusEvent[]
+  interviewsScheduled Interview[]
+  reports             JobReport[]              @relation("ReportReporter")
+  resolvedReports     JobReport[]              @relation("ReportResolver")
+  notifications       Notification[]
+  auditEvents         AuditEvent[]
+  settingsUpdates     PlatformSettings[]
+
+  @@index([role, status])
+  @@index([createdAt])
+  @@map("users")
+}
+
+/// Server-side session. Only a SHA-256 hash of the cookie token is stored.
+model Session {
+  id         String   @id @default(cuid())
+  tokenHash  String   @unique @map("token_hash")
+  userId     String   @map("user_id")
+  expiresAt  DateTime @map("expires_at")
+  ipAddress  String?  @map("ip_address") @db.VarChar(64)
+  userAgent  String?  @map("user_agent") @db.VarChar(300)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// ─── Profiles ───────────────────────────────────────────────────────────────
+
+model CandidateProfile {
+  userId                String          @id @map("user_id")
+  headline              String?         @db.VarChar(160)
+  summary               String?         @db.Text
+  location              String?         @db.VarChar(120)
+  phone                 String?         @db.VarChar(40)
+  skills                String[]        @default([])
+  /// Lower-cased copy of skills for case-insensitive filtering.
+  skillKeys             String[]        @default([]) @map("skill_keys")
+  experienceYears       Int?            @map("experience_years")
+  desiredEmploymentType EmploymentType? @map("desired_employment_type")
+  desiredWorkplaceType  WorkplaceType?  @map("desired_workplace_type")
+  linkedinUrl           String?         @map("linkedin_url") @db.VarChar(300)
+  portfolioUrl          String?         @map("portfolio_url") @db.VarChar(300)
+  openToWork            Boolean         @default(true) @map("open_to_work")
+  createdAt             DateTime        @default(now()) @map("created_at")
+  updatedAt             DateTime        @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([skillKeys], type: Gin)
+  @@map("candidate_profiles")
+}
+
+model Company {
+  id          String   @id @default(cuid())
+  name        String   @db.VarChar(120)
+  slug        String   @unique @db.VarChar(140)
+  website     String?  @db.VarChar(300)
+  description String?  @db.Text
+  industry    String?  @db.VarChar(80)
+  size        String?  @db.VarChar(40)
+  location    String?  @db.VarChar(120)
+  verified    Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  recruiters RecruiterProfile[]
+  jobs       Job[]
+
+  @@index([name])
+  @@map("companies")
+}
+
+model RecruiterProfile {
+  userId    String   @id @map("user_id")
+  companyId String   @map("company_id")
+  jobTitle  String?  @map("job_title") @db.VarChar(120)
+  phone     String?  @db.VarChar(40)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+
+  @@index([companyId])
+  @@map("recruiter_profiles")
+}
+
+// ─── Jobs ───────────────────────────────────────────────────────────────────
+
+model Job {
+  id                  String           @id @default(cuid())
+  companyId           String           @map("company_id")
+  postedById          String           @map("posted_by_id")
+  title               String           @db.VarChar(160)
+  description         String           @db.Text
+  requirements        String           @db.Text
+  responsibilities    String?          @db.Text
+  benefits            String?          @db.Text
+  location            String           @db.VarChar(120)
+  workplaceType       WorkplaceType    @map("workplace_type")
+  employmentType      EmploymentType   @map("employment_type")
+  experienceLevel     ExperienceLevel  @map("experience_level")
+  salaryMin           Int?             @map("salary_min")
+  salaryMax           Int?             @map("salary_max")
+  salaryCurrency      String           @default("USD") @map("salary_currency") @db.VarChar(3)
+  skills              String[]         @default([])
+  /// Lower-cased copy of skills for case-insensitive search.
+  skillKeys           String[]         @default([]) @map("skill_keys")
+  status              JobStatus        @default(DRAFT)
+  moderationStatus    ModerationStatus @default(ACTIVE) @map("moderation_status")
+  moderationReason    String?          @map("moderation_reason") @db.VarChar(500)
+  applicationDeadline DateTime?        @map("application_deadline")
+  publishedAt         DateTime?        @map("published_at")
+  closedAt            DateTime?        @map("closed_at")
+  viewCount           Int              @default(0) @map("view_count")
+  createdAt           DateTime         @default(now()) @map("created_at")
+  updatedAt           DateTime         @updatedAt @map("updated_at")
+
+  company      Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  postedBy     User          @relation(fields: [postedById], references: [id], onDelete: Restrict)
+  applications Application[]
+  savedBy      SavedJob[]
+  reports      JobReport[]
+
+  @@index([status, moderationStatus, publishedAt])
+  @@index([companyId])
+  @@index([postedById, status])
+  @@index([employmentType])
+  @@index([workplaceType])
+  @@index([experienceLevel])
+  @@index([skillKeys], type: Gin)
+  @@map("jobs")
+}
+
+model SavedJob {
+  userId    String   @map("user_id")
+  jobId     String   @map("job_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job  Job  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@id([userId, jobId])
+  @@index([jobId])
+  @@map("saved_jobs")
+}
+
+model JobReport {
+  id             String       @id @default(cuid())
+  jobId          String       @map("job_id")
+  reporterId     String       @map("reporter_id")
+  reason         ReportReason
+  details        String?      @db.VarChar(1000)
+  status         ReportStatus @default(OPEN)
+  resolutionNote String?      @map("resolution_note") @db.VarChar(500)
+  resolvedById   String?      @map("resolved_by_id")
+  resolvedAt     DateTime?    @map("resolved_at")
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  job        Job   @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  reporter   User  @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  resolvedBy User? @relation("ReportResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  /// One report per user per job prevents report spam.
+  @@unique([jobId, reporterId])
+  @@index([status, createdAt])
+  @@map("job_reports")
+}
+
+// ─── Resumes & applications ─────────────────────────────────────────────────
+
+/// Metadata for a stored resume file. The file itself lives in the configured
+/// storage adapter (local volume or S3) under `storageKey`.
+model Resume {
+  id           String   @id @default(cuid())
+  ownerId      String   @map("owner_id")
+  originalName String   @map("original_name") @db.VarChar(200)
+  storageKey   String   @unique @map("storage_key") @db.VarChar(300)
+  mimeType     String   @map("mime_type") @db.VarChar(120)
+  sizeBytes    Int      @map("size_bytes")
+  sha256       String   @db.VarChar(64)
+  isDefault    Boolean  @default(false) @map("is_default")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  owner        User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  applications Application[]
+
+  @@index([ownerId, createdAt])
+  @@map("resumes")
+}
+
+model Application {
+  id          String            @id @default(cuid())
+  jobId       String            @map("job_id")
+  candidateId String            @map("candidate_id")
+  /// Set to NULL if the candidate deletes the resume (candidate privacy wins).
+  resumeId    String?           @map("resume_id")
+  coverLetter String?           @map("cover_letter") @db.Text
+  status      ApplicationStatus @default(APPLIED)
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  /// Jobs with applications cannot be deleted (close them instead).
+  job        Job                      @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  candidate  User                     @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  resume     Resume?                  @relation(fields: [resumeId], references: [id], onDelete: SetNull)
+  events     ApplicationStatusEvent[]
+  notes      ApplicationNote[]
+  interviews Interview[]
+
+  /// Duplicate-application guard enforced by the database.
+  @@unique([jobId, candidateId])
+  @@index([candidateId, createdAt])
+  @@index([jobId, status])
+  @@index([resumeId])
+  @@map("applications")
+}
+
+/// Status history, visible to the candidate and the job's recruiter.
+model ApplicationStatusEvent {
+  id            String             @id @default(cuid())
+  applicationId String             @map("application_id")
+  fromStatus    ApplicationStatus? @map("from_status")
+  toStatus      ApplicationStatus  @map("to_status")
+  changedById   String?            @map("changed_by_id")
+  createdAt     DateTime           @default(now()) @map("created_at")
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  changedBy   User?       @relation(fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([applicationId, createdAt])
+  @@map("application_status_events")
+}
+
+/// Internal recruiter notes. Never shown to candidates.
+model ApplicationNote {
+  id            String   @id @default(cuid())
+  applicationId String   @map("application_id")
+  authorId      String   @map("author_id")
+  body          String   @db.VarChar(4000)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  author      User        @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId, createdAt])
+  @@map("application_notes")
+}
+
+model Interview {
+  id              String          @id @default(cuid())
+  applicationId   String          @map("application_id")
+  scheduledById   String          @map("scheduled_by_id")
+  startsAt        DateTime        @map("starts_at")
+  durationMinutes Int             @default(45) @map("duration_minutes")
+  mode            InterviewMode
+  /// Meeting link, phone number or address — shared with the candidate.
+  location        String?         @db.VarChar(300)
+  /// Recruiter-only notes. Never shown to candidates.
+  internalNotes   String?         @map("internal_notes") @db.VarChar(2000)
+  status          InterviewStatus @default(SCHEDULED)
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  scheduledBy User        @relation(fields: [scheduledById], references: [id], onDelete: Cascade)
+
+  @@index([applicationId])
+  @@index([scheduledById, startsAt])
+  @@map("interviews")
+}
+
+// ─── Platform ───────────────────────────────────────────────────────────────
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String           @map("user_id")
+  type      NotificationType
+  title     String           @db.VarChar(200)
+  body      String?          @db.VarChar(1000)
+  link      String?          @db.VarChar(300)
+  readAt    DateTime?        @map("read_at")
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@map("notifications")
+}
+
+/// Append-only log of significant (mostly administrative) actions.
+model AuditEvent {
+  id         String   @id @default(cuid())
+  actorId    String?  @map("actor_id")
+  action     String   @db.VarChar(80)
+  entityType String   @map("entity_type") @db.VarChar(40)
+  entityId   String?  @map("entity_id") @db.VarChar(40)
+  metadata   Json?
+  ipAddress  String?  @map("ip_address") @db.VarChar(64)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([actorId, createdAt])
+  @@index([entityType, entityId])
+  @@index([action])
+  @@map("audit_events")
+}
+
+/// Singleton row (id = 1) holding platform-wide settings.
+model PlatformSettings {
+  id                         Int      @id @default(1)
+  allowCandidateRegistration Boolean  @default(true) @map("allow_candidate_registration")
+  allowRecruiterRegistration Boolean  @default(true) @map("allow_recruiter_registration")
+  maxResumesPerCandidate     Int      @default(5) @map("max_resumes_per_candidate")
+  announcement               String?  @db.VarChar(300)
+  updatedById                String?  @map("updated_by_id")
+  updatedAt                  DateTime @updatedAt @map("updated_at")
+
+  updatedBy User? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@map("platform_settings")
+}

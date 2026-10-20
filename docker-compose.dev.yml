@@ -1,0 +1,25 @@
+# Development database only (the app runs on the host with `npm run dev`).
+#   npm run db:dev:up
+# Published on 127.0.0.1 only, never on all interfaces.
+name: careerhub-dev
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: careerhub
+      POSTGRES_PASSWORD: careerhub_dev_password
+      POSTGRES_DB: careerhub
+    ports:
+      - "127.0.0.1:${DEV_DB_PORT:-5434}:5432"
+    volumes:
+      - careerhub_dev_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U careerhub -d careerhub"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  careerhub_dev_pgdata:

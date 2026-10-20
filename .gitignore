@@ -1,0 +1,39 @@
+# Dependencies & build output
+node_modules/
+.next/
+out/
+build/
+release/
+src/generated/
+next-env.d.ts
+*.tsbuildinfo
+
+# Secrets — only .env.example is committed
+.env
+.env.*
+!.env.example
+
+# Uploaded resumes and local runtime data (never commit personal data)
+storage/
+uploads/
+backups/
+*.dump
+
+# Tests, coverage, logs
+coverage/
+test-results/
+playwright-report/
+blob-report/
+tests/e2e/.auth/
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Local agent tooling
+.claude/
